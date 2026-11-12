@@ -1,0 +1,74 @@
+# Reusable Azure DevOps multi-stage pipeline: build and test, then deploy to staging, then production.
+# Copy to the root of your repo as azure-pipelines.yml and adjust the values marked CHANGE.
+#
+# Production approvals: in Azure DevOps go to Pipelines > Environments > "production" >
+# Approvals and checks, and add the required approvers. The deploy job below waits for them.
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  nodeVersion: '20.x'            # CHANGE: your Node.js version
+  artifactName: 'drop'
+
+stages:
+  - stage: Build
+    displayName: Build and test
+    jobs:
+      - job: BuildTest
+        steps:
+          - task: NodeTool@0
+            displayName: Use Node.js
+            inputs:
+              versionSpec: $(nodeVersion)
+
+          - script: |
+              npm ci
+              npm run lint --if-present
+              npm test --if-present
+              npm run build --if-present
+            displayName: Install, lint, test, build
+
+          - task: PublishBuildArtifacts@1
+            displayName: Publish build artifact
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)'
+              ArtifactName: $(artifactName)
+
+  - stage: Staging
+    displayName: Deploy to staging
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployStaging
+        environment: staging       # CHANGE: create this environment in Azure DevOps
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Deploy build $(Build.BuildNumber) to staging"   # CHANGE: replace with your deploy task
+                  displayName: Deploy to staging
+
+  - stage: Production
+    displayName: Deploy to production
+    dependsOn: Staging
+    condition: succeeded()
+    jobs:
+      - deployment: DeployProduction
+        environment: production    # CHANGE: add approvals and checks on this environment
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Deploy build $(Build.BuildNumber) to production"   # CHANGE: replace with your deploy task
+                  displayName: Deploy to production
